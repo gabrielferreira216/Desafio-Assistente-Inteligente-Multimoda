@@ -1,0 +1,13 @@
+============================================================
+PROJETO: ASSISTENTE INTELLIGENTE MULTIMODAL
+============================================================
+
+COMO EXECUTAR:
+1. Dê um duplo clique no ficheiro "instalar.bat" para configurar o ambiente.
+2. Dê um duplo clique no ficheiro "executar.bat" para abrir o assistente.
+
+MODOS DE TESTE ACEITES:
+- Texto Direto: "O projetor da sala 204 não liga e a aula começa em 10 minutos"
+- Simulação Áudio: "audio: Não consigo acessar o portal acadêmico"
+- Simulação Imagem: "foto: Imagem do cabo de rede partido"
+- Ficheiros Reais: Cole o caminho do ficheiro (ex: C:\imagens\erro.png)
