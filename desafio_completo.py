@@ -1,36 +1,32 @@
 import os
 import json
 import numpy as np
+import tkinter as tk
+from tkinter import filedialog
+import cv2
+import sounddevice as sd
+from scipy.io.wavfile import write
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 
-# Verificação de bibliotecas multimediáticas avançadas
-try:
-    import easyocr
-    import whisper
-    MODULOS_REAIS_DISPONIVEIS = True
-except ImportError:
-    MODULOS_REAIS_DISPONIVEIS = False
-    print("\n[AVISO] 'easyocr' ou 'openai-whisper' não detetados. O sistema utilizará o modo de simulação por prefixo.")
+# Importação dos leitores de IA
+import easyocr
+import whisper
 
-# 1. CARREGAMENTO E BASE DE CONHECIMENTO (RAG)
+# 1. CARREGAMENTO DOS MODELOS
 print("\n" + "="*60)
-print("ASSISTENTE INTELEGENE MULTIMODAL DE CHAMADOS")
+print("INICIALIZANDO ASSISTENTE MULTIMODAL INTERATIVO")
 print("="*60)
 
-print("Carregando modelo de Embeddings...")
+print("1/3 - Carregando RAG (Embeddings)...")
 modelo_embed = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
-# Inicialização de leitores de Imagem e Áudio
-reader_ocr = None
-modelo_whisper = None
+print("2/3 - Carregando OCR (Leitor de Imagem EasyOCR)...")
+reader_ocr = easyocr.Reader(['pt', 'en'], gpu=False)
 
-if MODULOS_REAIS_DISPONIVEIS:
-    print("Inicializando leitor de Imagens (EasyOCR)...")
-    reader_ocr = easyocr.Reader(['pt', 'en'], gpu=False)
-    print("Inicializando transcritor de Áudio (Whisper)...")
-    modelo_whisper = whisper.load_model("tiny")
+print("3/3 - Carregando STT (Transcritor de Voz Whisper)...")
+modelo_whisper = whisper.load_model("tiny")
 
 # Base de Conhecimento Oficial (RAG)
 base_documentos = [
@@ -95,79 +91,126 @@ X_vetorizado = vectorizer.fit_transform(X_treino)
 clf_categoria = RandomForestClassifier(random_state=42).fit(X_vetorizado, y_categoria)
 clf_prioridade = RandomForestClassifier(random_state=42).fit(X_vetorizado, y_prioridade)
 
-# 3. ROTEADOR DE ENTRADA MULTIMODAL
-def roteador_entrada(entrada):
-    caminho_str = entrada.strip("'\"")
+# 3. CAPTURADORES REAIS (CAMERA, MICROFONE, EXPLORADOR)
+
+def abrir_janela_arquivo():
+    """Abre o Explorador de Arquivos do Windows para escolher um arquivo"""
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes('-topmost', True)
+    caminho = filedialog.askopenfilename(
+        title="Selecione a Imagem, Áudio ou Texto do chamado",
+        filetypes=[
+            ("Todos os Arquivos Suportados", "*.png *.jpg *.jpeg *.bmp *.mp3 *.wav *.m4a *.txt"),
+            ("Imagens", "*.png *.jpg *.jpeg *.bmp"),
+            ("Áudios", "*.mp3 *.wav *.m4a"),
+            ("Texto", "*.txt")
+        ]
+    )
+    return caminho
+
+def gravar_audio_microfone(segundos=5, taxa_amostragem=44100):
+    """Grava o som do microfone por N segundos"""
+    print(f"\n🎙️ GRAVANDO MICROFONE POR {segundos} SEGUNDOS... FALE AGORA!")
+    gravacao = sd.rec(int(segundos * taxa_amostragem), samplerate=taxa_amostragem, channels=1, dtype='int16')
+    sd.wait()
+    print("✅ Gravação concluída!")
+    
+    caminho_audio = "audio_gravado.wav"
+    write(caminho_audio, taxa_amostragem, gravacao)
+    return caminho_audio
+
+def capturar_foto_webcam():
+    """Abre a webcam. Pressione ESPAÇO para tirar a foto ou ESC para cancelar."""
+    print("\n📷 ABRINDO WEBCAM... Pressione [ESPAÇO] para tirar a foto ou [ESC] para sair.")
+    cap = cv2.VideoCapture(0)
+    
+    if not cap.isOpened():
+        print("❌ Erro ao acessar a webcam.")
+        return None
+
+    caminho_foto = None
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("❌ Erro ao ler a imagem da câmera.")
+            break
+
+        cv2.imshow("Webcam - Pressione ESPACO para capturar", frame)
+        key = cv2.waitKey(1)
+        
+        if key % 256 == 27:  # ESC
+            print("Captura cancelada.")
+            break
+        elif key % 256 == 32:  # ESPAÇO
+            caminho_foto = "foto_webcam.jpg"
+            cv2.imwrite(caminho_foto, frame)
+            print("✅ Foto tirada com sucesso!")
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+    return caminho_foto
+
+# 4. ROTEADOR MULTIMODAL REAL
+def processar_entrada(caminho_ou_texto, modo):
+    if modo == "texto":
+        return "Texto Direto", caminho_ou_texto
+
     extensoes_audio = ['.mp3', '.wav', '.m4a', '.ogg', '.flac']
     extensoes_imagem = ['.jpg', '.jpeg', '.png', '.bmp', '.webp']
-    
-    _, ext = os.path.splitext(caminho_str.lower())
+    _, ext = os.path.splitext(caminho_ou_texto.lower())
 
-    # Processamento de Ficheiro de Áudio Real
-    if os.path.isfile(caminho_str) and ext in extensoes_audio:
-        modalidade = "Áudio / Voz (Transcrição Whisper STT)"
-        if modelo_whisper:
-            res = modelo_whisper.transcribe(caminho_str, language="pt")
-            texto_limpo = res["text"].strip()
-        else:
-            texto_limpo = "Instale openai-whisper para processar ficheiros de áudio reais."
+    # Processamento de Áudio
+    if ext in extensoes_audio or modo == "audio":
+        print(f"-> Transcrevendo áudio via Whisper...")
+        res = modelo_whisper.transcribe(caminho_ou_texto, language="pt")
+        texto_extraido = res["text"].strip()
+        modalidade = "Áudio / Voz (Microfone/Arquivo STT)"
 
-    # Processamento de Ficheiro de Imagem Real
-    elif os.path.isfile(caminho_str) and ext in extensoes_imagem:
-        modalidade = "Imagem Visual (Análise OCR/EasyOCR)"
-        if reader_ocr:
-            resultados = reader_ocr.readtext(caminho_str, detail=0)
-            texto_limpo = " ".join(resultados).strip()
-            if not texto_limpo:
-                texto_limpo = "Imagem sem texto legível identificável."
-        else:
-            texto_limpo = "Instale easyocr para processar ficheiros de imagem reais."
+    # Processamento de Imagem
+    elif ext in extensoes_imagem or modo == "camera":
+        print(f"-> Lendo texto da imagem via EasyOCR...")
+        resultados = reader_ocr.readtext(caminho_ou_texto, detail=0)
+        texto_extraido = " ".join(resultados).strip()
+        if not texto_extraido:
+            texto_extraido = "Imagem capturada sem texto legível identificável"
+        modalidade = "Imagem Visual (Webcam/Arquivo OCR)"
 
-    # Simulação por Prefixes
-    elif caminho_str.lower().startswith("audio:"):
-        modalidade = "Áudio / Voz (Transcrição STT)"
-        texto_limpo = caminho_str.replace("audio:", "", 1).replace("Audio:", "", 1).strip()
-
-    elif caminho_str.lower().startswith("foto:") or caminho_str.lower().startswith("imagem:"):
-        modalidade = "Imagem Visual (Análise VLM/OCR)"
-        texto_limpo = caminho_str.replace("foto:", "", 1).replace("imagem:", "", 1).strip()
-
-    # Texto Direto
     else:
-        modalidade = "Texto Direto"
-        texto_limpo = caminho_str.strip()
+        # Ficheiro de Texto (.txt)
+        with open(caminho_ou_texto, 'r', encoding='utf-8') as f:
+            texto_extraido = f.read().strip()
+        modalidade = "Arquivo de Texto (.txt)"
 
-    return modalidade, texto_limpo
+    return modalidade, texto_extraido
 
-# 4. PIPELINE DE PROCESSAMENTO DO CHAMADO
-def processar_chamado(entrada_bruta):
-    modalidade, texto_processado = roteador_entrada(entrada_bruta)
+# 5. PIPELINE COMPLETO
+def processar_chamado(caminho_ou_texto, modo):
+    modalidade, texto_processado = processar_entrada(caminho_ou_texto, modo)
     
-    # Previsão ML
+    print(f"\nTexto Extraído: '{texto_processado}'")
+    
+    # Classificação ML
     vetor_input = vectorizer.transform([texto_processado])
     cat_pred = clf_categoria.predict(vetor_input)[0]
     prio_pred = clf_prioridade.predict(vetor_input)[0]
     
-    # Extração de palavras-chave para Justificativa
-    stopwords = {
-        "para", "como", "esta", "com", "minhas", "minha", "pelo", "pela", 
-        "imagem", "audio", "foto", "preciso", "quero", "sobre", "onde",
-        "mais", "muito", "estou", "está", "isso", "esse", "essa"
-    }
+    # Justificativa
+    stopwords = {"para", "como", "esta", "com", "minhas", "minha", "pelo", "pela", "preciso", "quero", "sobre"}
     palavras_chave = [w.strip(".,:;!?") for w in texto_processado.split() if len(w) > 3 and w.lower() not in stopwords]
     if not palavras_chave:
         palavras_chave = texto_processado.split()
 
     justificativa = f"Escolhi a categoria '{cat_pred}' com prioridade '{prio_pred}' baseando-me nos termos '{', '.join(palavras_chave[:3])}'."
 
-    # RAG - Busca Semântica
+    # RAG
     vetor_pergunta = modelo_embed.encode([texto_processado], normalize_embeddings=True)
     similaridades = np.dot(vetores_base, vetor_pergunta.T).squeeze()
     
     idx_melhor = int(np.argmax(similaridades))
     score_melhor = float(similaridades[idx_melhor])
     
-    # Limiar de Confiabilidade
     if score_melhor >= 0.35:
         doc_relacionado = base_documentos[idx_melhor]["id"]
         resposta = base_documentos[idx_melhor]["resposta"]
@@ -176,9 +219,9 @@ def processar_chamado(entrada_bruta):
         resposta = "Não foi encontrada uma resposta exata na base oficial. Chamado encaminhado para atendimento humano."
         
     return {
-        "Entrada Bruta": entrada_bruta,
+        "Entrada Bruta": caminho_ou_texto,
         "Modalidade Identificada": modalidade,
-        "Texto Processado": texto_processado,
+        "Texto Processado Extraído": texto_processado,
         "Saídas Esperadas": {
             "1. Categoria": cat_pred,
             "2. Prioridade": prio_pred,
@@ -189,19 +232,53 @@ def processar_chamado(entrada_bruta):
         }
     }
 
-# 5. EXECUÇÃO
-print("\nAssistente iniciado com sucesso. Envie seu chamado abaixo:")
+# 6. MENU INTERATIVO PRINCIPAL
 while True:
-    print("\n" + "-"*60)
-    entrada = input("Envie o chamado (Texto, Caminho da Foto/Áudio ou Prefixo): ").strip()
+    print("\n" + "="*60)
+    print("MENU DE ATENDIMENTO AO CLIENTE - SELECIONE O MODO")
+    print("="*60)
+    print("[ 1 ] Digitar Texto do Chamado")
+    print("[ 2 ] Escolher Arquivo no Computador (Janela do Windows)")
+    print("[ 3 ] Gravar Áudio Agora pelo Microfone")
+    print("[ 4 ] Tirar Foto Agora pela Câmera (Webcam)")
+    print("[ 0 ] Sair")
     
-    if entrada.lower() in ["sair", "exit", "0"]:
-        print("\nEncerrando o assistente. Até logo!")
+    opcao = input("\nEscolha uma opção (0-4): ").strip()
+    
+    caminho_ou_texto = None
+    modo = None
+
+    if opcao == "1":
+        caminho_ou_texto = input("\nDigite a sua dúvida ou problema: ").strip()
+        modo = "texto"
+    
+    elif opcao == "2":
+        print("\nAbrindo janela de arquivos...")
+        caminho_ou_texto = abrir_janela_arquivo()
+        modo = "arquivo"
+        if not caminho_ou_texto:
+            print("Nenhum arquivo selecionado.")
+            continue
+            
+    elif opcao == "3":
+        segundos = int(input("Quantos segundos deseja gravar? (Ex: 5): ") or "5")
+        caminho_ou_texto = gravar_audio_microfone(segundos=segundos)
+        modo = "audio"
+        
+    elif opcao == "4":
+        caminho_ou_texto = capturar_foto_webcam()
+        modo = "camera"
+        if not caminho_ou_texto:
+            continue
+            
+    elif opcao in ["0", "sair", "exit"]:
+        print("\nEncerrando o sistema. Até logo!")
         break
-        
-    if not entrada:
+    else:
+        print("Opção inválida, tente novamente.")
         continue
-        
-    resultado = processar_chamado(entrada)
-    print("\nRESULTADO DO ATENDIMENTO:")
-    print(json.dumps(resultado, indent=2, ensure_ascii=False))
+
+    if caminho_ou_texto:
+        resultado = processar_chamado(caminho_ou_texto, modo)
+        print("\nRESULTADO DO ATENDIMENTO:")
+        print(json.dumps(resultado, indent=2, ensure_ascii=False))
