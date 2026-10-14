@@ -3,5 +3,8 @@ scikit-learn
 numpy
 easyocr
 openai-whisper
+opencv-python
+sounddevice
+scipy
 torch
 pillow
